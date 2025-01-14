@@ -1,0 +1,132 @@
+#include <pathplanner/lib/util/HolonomicPathFollowerConfig.h>
+#include <pathplanner/lib/util/PIDConstants.h>
+#include <pathplanner/lib/util/ReplanningConfig.h>
+#include <frc/geometry/Pose2d.h>
+#include <frc/kinematics/ChassisSpeeds.h>
+#include <frc/DriverStation.h>
+
+using namespace pathplanner;
+
+SwerveSubsystem::SwerveSubsystem(){
+    // Do all subsystem initialization here
+    // ...
+
+    // Configure the AutoBuilder last
+    AutoBuilder::configureHolonomic(
+        [this](){ return getPose(); }, // Robot pose supplier
+        [this](frc::Pose2d pose){ resetPose(pose); }, // Method to reset odometry (will be called if your auto has a starting pose)
+        [this](){ return getRobotRelativeSpeeds(); }, // ChassisSpeeds supplier. MUST BE ROBOT RELATIVE
+        [this](frc::ChassisSpeeds speeds){ driveRobotRelative(speeds); }, // Method that will drive the robot given ROBOT RELATIVE ChassisSpeeds
+        HolonomicPathFollowerConfig( // HolonomicPathFollowerConfig, this should likely live in your Constants class
+            PIDConstants(5.0, 0.0, 0.0), // Translation PID constants
+            PIDConstants(5.0, 0.0, 0.0), // Rotation PID constants
+            4.5_mps, // Max module speed, in m/s
+            0.4_m, // Drive base radius in meters. Distance from robot center to furthest module.
+            ReplanningConfig() // Default path replanning config. See the API for the options here
+        ),
+        []() {
+            // Boolean supplier that controls when the path will be mirrored for the red alliance
+            // This will flip the path being followed to the red side of the field.
+            // THE ORIGIN WILL REMAIN ON THE BLUE SIDE
+
+            auto alliance = DriverStation::GetAlliance();
+            if (alliance) {
+                return alliance.value() == DriverStation::Alliance::kRed;
+            }
+            return false;
+        },
+        this // Reference to this subsystem to set requirements
+    );
+   
+    #include <pathplanner/lib/auto/NamedCommands.h>
+#include <memory>
+
+using namespace pathplanner;
+
+RobotContainer::RobotContainer() : m_swerve(), m_exampleSubsystem() {
+    // Register Named Commands. You must pass either a CommandPtr rvalue or a shared_ptr to the command, not the command directly.
+    NamedCommands::registerCommand("autoBalance", std::move(m_swerve.autoBalanceCommand())); // <- This example method returns CommandPtr
+    NamedCommands::registerCommand("exampleCommand", std::move(m_exampleSubsystem.exampleCommand())); // <- This example method returns CommandPtr
+    NamedCommands::registerCommand("someOtherCommand", std::move(SomeOtherCommand().ToPtr()));
+    NamedCommands::registerCommand("someOtherCommandShared", std::make_shared<frc2::SomeOtherCommand>());
+
+    // Do all other initialization
+    configureButtonBindings();
+
+    // ...
+}
+#include <pathplanner/lib/path/PathPlannerPath.h>
+#include <pathplanner/lib/auto/AutoBuilder.h>
+
+using namespace pathplanner;
+
+frc2::CommandPtr RobotContainer::getAutonomousCommand(){
+    // Load the path you want to follow using its name in the GUI
+    auto path = PathPlannerPath::fromPathFile("Path1.path");
+
+    // Create a path following command using AutoBuilder. This will also trigger event markers.
+    return AutoBuilder::followPath(path);
+}
+#include <pathplanner/lib/path/PathPlannerPath.h>
+
+using namespace pathplanner;
+
+
+// Create a vector of bezier points from poses. Each pose represents one waypoint.
+// The rotation component of the pose should be the direction of travel. Do not use holonomic rotation.
+std::vector<frc::Pose2d> poses{
+    frc::Pose2d(1.0_m, 1.0_m, frc::Rotation2d(0_deg)),
+    frc::Pose2d(3.0_m, 1.0_m, frc::Rotation2d(0_deg)),
+    frc::Pose2d(5.0_m, 3.0_m, frc::Rotation2d(90_deg))
+};
+std::vector<frc::Translation2d> bezierPoints = PathPlannerPath::bezierFromPoses(poses);
+
+// Create the path using the bezier points created above
+// We make a shared pointer here since the path following commands require a shared pointer
+auto path = std::make_shared<PathPlannerPath>(
+    bezierPoints,
+    PathConstraints(3.0_mps, 3.0_mps_sq, 360_deg_per_s, 720_deg_per_s_sq), // The constraints for this path. If using a differential drivetrain, the angular constraints have no effect.
+    GoalEndState(0.0_mps, frc::Rotation2d(-90_deg)) // Goal end state. You can set a holonomic rotation here. If using a differential drivetrain, the rotation will have no effect.
+);
+
+// Prevent the path from being flipped if the coordinates are already correct
+path->preventFlipping = true;
+#include <pathplanner/lib/auto/PathPlannerAuto.h>
+
+using namespace pathplanner;
+
+// Use the PathPlannerAuto class to get a path group from an auto
+auto pathGroup = PathPlannerAuto::getPathGroupFromAutoFile("Path1.path");
+
+// You can also get the starting pose from the auto. Only call this if the auto actually has a starting pose.
+frc::Pose2d startingPose = PathPlannerAuto::getStartingPoseFromAutoFile("Path1.path");
+#include <frc/smartdashboard/Field2d.h>
+#include <frc/smartdashboard/SmartDashboard.h>
+#include <pathplanner/lib/util/PathPlannerLogging.h>
+
+using namespace pathplanner;
+
+frc::Field2d m_field;
+
+RobotContainer() {
+    frc::SmartDashboard::PutData("Field", &m_field);
+
+    // Logging callback for current robot pose
+    PathPlannerLogging::setLogCurrentPoseCallback([this](frc::Pose2d pose) -> {
+        // Do whatever you want with the pose here
+        m_field.SetRobotPose(pose);
+    });
+
+    // Logging callback for target robot pose
+    PathPlannerLogging::setLogTargetPoseCallback([this](frc::Pose2d pose) -> {
+        // Do whatever you want with the pose here
+        m_field.GetObject("target pose").setPose(pose);
+    });
+
+    // Logging callback for the active path, this is sent as a vector of poses
+    PathPlannerLogging::setLogActivePathCallback([this](std::vector<frc::Pose2d> poses) -> {
+        // Do whatever you want with the poses here
+        m_field.GetObject("path").setPoses(poses);
+    });
+}
+}
